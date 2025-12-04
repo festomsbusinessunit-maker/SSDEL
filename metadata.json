@@ -1,0 +1,5 @@
+{
+  "name": "SSDEL Multimodal Tax Agent",
+  "description": "A sophisticated multimodal AI agent for strategic tax compliance analysis, grounded in the NTA 2025 protocol. Upload documents and ask complex tax questions to receive detailed compliance reports.",
+  "requestFramePermissions": []
+}
