@@ -1,10 +1,11 @@
+
 import React, { useState, useCallback } from 'react';
 import type { Message } from './types';
 import { fileToBase64, getMimeType } from './utils/fileUtils';
 import { sendMessageStream } from './services/geminiService';
 import MessageList from './components/MessageList';
 import ChatInput from './components/ChatInput';
-import { Part } from '@google/genai';
+import { Part, Content } from '@google/genai';
 
 const App: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([
@@ -22,22 +23,41 @@ const App: React.FC = () => {
     const userMessageId = `user-${Date.now()}`;
     const userParts: Part[] = [{ text: query }];
     let imageUrl: string | undefined = undefined;
+    let base64Image: string | undefined = undefined;
+    let imageMimeType: string | undefined = undefined;
 
     try {
       if (file) {
-        const base64 = await fileToBase64(file);
-        const mimeType = getMimeType(file);
-        userParts.push({ inlineData: { data: base64, mimeType } });
-        imageUrl = `data:${mimeType};base64,${base64}`;
+        base64Image = await fileToBase64(file);
+        imageMimeType = getMimeType(file);
+        userParts.push({ inlineData: { data: base64Image, mimeType: imageMimeType } });
+        imageUrl = `data:${imageMimeType};base64,${base64Image}`;
       }
 
-      setMessages(prev => [...prev, { id: userMessageId, role: 'user', text: query, image: imageUrl }]);
+      // Optimistically update UI
+      const newUserMessage: Message = { id: userMessageId, role: 'user', text: query, image: imageUrl };
+      setMessages(prev => [...prev, newUserMessage]);
 
       const modelMessageId = `model-${Date.now()}`;
-      // Add a placeholder for the model's response
       setMessages(prev => [...prev, { id: modelMessageId, role: 'model', text: '', wordCount: 0 }]);
       
-      const stream = await sendMessageStream(userParts);
+      // Prepare history for the API
+      // We must map our local Message type to the Google GenAI Content type
+      const history: Content[] = messages.map(msg => {
+         const parts: Part[] = [{ text: msg.text }];
+         // If a previous message had an image, we ideally re-attach it or just send text context.
+         // For bandwidth efficiency in this stateless setup, we might rely on the textual context 
+         // of previous turns, but to be strictly correct, we should include images if the model supports multi-turn images.
+         // NOTE: Re-sending base64 images in history can be heavy. 
+         // For this implementation, we only send text history for previous turns to save bandwidth,
+         // unless it's critical.
+         return {
+             role: msg.role,
+             parts: parts
+         };
+      });
+
+      const stream = await sendMessageStream(history, userParts);
       let accumulatedText = '';
 
       for await (const chunk of stream) {
@@ -53,12 +73,11 @@ const App: React.FC = () => {
       console.error("SSDEL-TCA Request Error:", e);
       const errorMessage = e instanceof Error ? e.message : "An unknown error occurred.";
       setError(`A critical error occurred. Details: ${errorMessage}`);
-      // Remove the placeholder and show error
-      setMessages(prev => prev.slice(0, -1)); 
+      setMessages(prev => prev.slice(0, -1)); // Remove the empty model placeholder
     } finally {
       setIsLoading(false);
     }
-  }, [isLoading]);
+  }, [isLoading, messages]);
 
   return (
     <div className="min-h-screen bg-slate-900 text-gray-100 font-sans flex flex-col h-screen">
